@@ -1,0 +1,374 @@
+<html><head>
+
+<link rel="stylesheet" type="text/css" href="banner-styles.css">
+<link rel="stylesheet" type="text/css" href="iconochive.css">
+
+   <meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+   <meta name="description" content="A General Polygon Clipping Library">
+   <meta name="keywords" content="polygon clipping library">
+   <meta name="GENERATOR" content="Mozilla/4.04 [en] (X11; I; Linux 2.0.32 i686) [Netscape]">
+   <title>A General Polygon Clipping Library</title>
+</head>
+<body bgcolor="#FFFFFF" lang="EN">
+ 
+
+<center>
+<h2>A General Polygon Clipping Library</h2>
+
+<i>Version 2.32</i>
+
+<p>&nbsp;
+<b>
+<a href="https://web.archive.org/web/20200511113023/http://www.cs.man.ac.uk/aig/staff/alan/">Alan Murta</a><br>
+Advanced Interfaces Group<br>
+Department of Computer Science<br>
+University of Manchester<br>
+Manchester M13 9PL, UK
+</b>
+</p></center>
+
+<h4 class="ABSTRACT">Abstract:</h4>
+
+<div class="ABSTRACT">This document describes a C library implementation
+of a new polygon clipping algorithm. The techniques used are descended
+from Vatti's polygon clipping method [<a href="https://web.archive.org/web/20200511113023/http://www.cs.man.ac.uk/~toby/alan/software/gpc.html#vatti92">1</a>].
+Subject and clip polygons may be convex or concave, self-intersecting,
+contain holes, or be comprised of several disjoint contours. It extends
+the Vatti algorithm to allow horizontal edges in the source polygons, and
+to handle coincident edges in a robust manner. Four types of clipping
+operation are supported: <i>intersection</i>, <i>exclusive-or</i>, <i>union</i>
+or <i>difference</i> of subject and clip polygons. The output may take
+the form of polygon outlines or tristrips.</div>
+
+<h3>Introduction</h3>
+
+A generic polygon (or `polygon set') consists of zero or more disjoint
+boundaries of arbitrary configuration. Each boundary is termed a `contour',
+and may be convex, concave or self-intersecting. Internal holes may be
+formed by contour nesting.
+
+<center>
+<img src="polygon.gif" alt="A polygon set" height="240" width="360"><br>
+<b>Figure 1:</b> A polygon set with four contours.
+</center>
+
+
+<p>Figure 1 shows a polygon set comprised of four contours. Over to the
+left is a seven sided concave contour. Lying completely within it is a
+four-sided contour, which forms a hole in the surrounding shape. A third,
+triangular contour intersects the boundary of the first. Finally, over
+to the right is a disjoint self-intersecting four-sided contour. The interior
+of the polygon has been shaded for clarity.
+
+</p><p>The library supports four kinds of clipping (Boolean set) operation:
+<i>difference</i>, <i>intersection</i> <i>exclusive-or</i> or <i>union</i>
+of subject and clip polygon pairs. These are illustrated in Figure 2. In
+each case, the (single) resulting polygon is shown shaded.</p><p>
+
+</p><center>
+<img src="diff.gif" alt="Difference" border="0" height="255" width="240">&nbsp;
+<img src="int.gif" alt="Intersection" border="0" height="255" width="240"><br>
+<img src="xor.gif" alt="Exclusive-or" border="0" height="255" width="240">&nbsp;
+<img src="union.gif" alt="Union" border="0" height="255" width="240"><br>
+<b>Figure 2:</b> Difference, intersection, exclusive-or and union operations.
+</center>
+
+<h3>Recent API changes</h3>
+
+The release of Version 2.30 featured some minor changes to the application
+programmer's interface. These included:
+<ul>
+<li>
+An additional <tt>hole</tt> field in the <tt>gpc_polygon</tt> datatype
+to differentiate hole contours from external contours.</li>
+
+<li>
+A similar additional <tt>hole</tt> parameter to <tt>gpc_add_contour()</tt>.</li>
+
+<li>
+An extra parameter in the <tt>gpc_read_polygon()</tt> and <tt>gpc_write_polygon()</tt>
+functions to specify the polygon datafile format (with or without hole
+contour flags).</li>
+</ul>
+
+<h3>Data types</h3>
+
+The generic polygon clipper (gpc) library defines the following structure
+types for the representation of polygons:
+<pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; typedef struct&nbsp;&nbsp; /* Polygon vertex */
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; double&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; x;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; double&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; y;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; } gpc_vertex;
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; typedef struct&nbsp;&nbsp; /* Polygon contour */
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; num_vertices;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_vertex&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *vertex;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; } gpc_vertex_list;
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; typedef struct&nbsp;&nbsp; /* Polygon set */
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; num_contours;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *hole;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_vertex_list&nbsp; *contour;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; } gpc_polygon;</pre>
+The clipper takes a pair of subject and clip polygons and combines them
+to form a result polygon. For each contour polygon in the result polygon,
+the <tt>hole</tt> value flags whether or not the given contour forms a
+hole or an external boundary.
+
+<p>Alternatively a collection of tristrips may be generated as the result,
+this form being more suitable for rendering filled shapes. (The polygon
+result form is better for drawing outlines, or as intermediate values in
+multi-clip operations.) Tristrip collections are represented using the
+following data type:
+</p><pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; typedef struct&nbsp;&nbsp; /* Set of tristrips */
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; num_strips;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_vertex_list&nbsp; *strip;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; } gpc_tristrip;</pre>
+
+<h3>
+Library functions</h3>
+Eight functions are provided by the library. Two support the reading and
+writing of data between polygon files and <tt>gpc_polygon</tt> structures.
+<pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; void gpc_read_polygon(FILE&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *fp,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; read_hole_flags,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_polygon *polygon);
+&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; void gpc_write_polygon(FILE&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *fp,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; write_hole_flags,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_polygon *polygon);</pre>
+A polygon is stored in an ASCII file using the format:
+
+<p>&nbsp;&nbsp;&nbsp; &lt;<i>num-contours</i>&gt;
+<br>&nbsp;&nbsp;&nbsp; &lt;<i>num-vertices-in-first-contour</i>&gt;
+<br>&nbsp;&nbsp;&nbsp; [&lt;<i>first-contour-hole-flag</i>&gt;]
+<br>&nbsp;&nbsp;&nbsp; &lt;<i>vertex-list</i>&gt;
+<br>&nbsp;&nbsp;&nbsp; &lt;<i>num-vertices-in-second-contour</i>&gt;
+<br>&nbsp;&nbsp;&nbsp; [&lt;<i>second-contour-hole-flag</i>&gt;]
+<br>&nbsp;&nbsp;&nbsp; &lt;<i>vertex-list</i>&gt;
+
+</p><p>etc. The hole-flag values are optional, their reading and writing being
+controlled by setting the second argument of <tt>gpc_read_polygon()</tt>
+and <tt>gpc_write_polygon()</tt> to 1 (<tt>TRUE</tt>) or 0 (<tt>FALSE</tt>).
+Clip operations will correctly set the contour hole flags of the result
+polygon. This information may be ignored by the user application if it
+is not required.
+
+</p><p>For example, a single polygon consisting of a triangular hole within
+a quadrilateral (with hole flags included) may take the form:
+</p><pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 2
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 3
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 4.0&nbsp;&nbsp; 4.0
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 6.0&nbsp;&nbsp; 5.0
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 5.0&nbsp;&nbsp; 6.0
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 4
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 2.0&nbsp;&nbsp; 1.0
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 8.0&nbsp;&nbsp; 2.0
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 7.0&nbsp;&nbsp; 9.0
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1.0&nbsp;&nbsp; 7.0</pre>
+An interactive drawing program may require the ability to construct a polygon
+contour-by-contour in an incremental fashion. The function <tt>gpc_add_contour()</tt>
+facilitates the merging of a new contour with an existing polygon. The
+final parameter has the value 1 (<tt>TRUE</tt>) or 0 (<tt>FALSE</tt>),
+and indicates whether or not the contour should be considered to be a hole.
+It is suggested that all contours are initially treated as non-hole (external)
+contours. Any subsequent clipping operation will set the result polygon
+hole flags correctly.
+<pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; void gpc_add_contour(gpc_polygon&nbsp;&nbsp;&nbsp;&nbsp; *p,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_vertex_list *c,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; hole);</pre>
+The clipping operation itself is performed by the function
+<pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; void gpc_polygon_clip(gpc_op&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; operation,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_polygon *subject_p,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_polygon *clip_p,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_polygon *result_p);</pre>
+or, if a tristrip based result is required
+<pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; void gpc_tristrip_clip(gpc_op&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; operation,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_polygon&nbsp; *subject_p,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_polygon&nbsp; *clip_p,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_tristrip *result_t);</pre>
+In both cases the first parameter specifies the clip operation to be performed
+(namely <tt>GPC_DIFF</tt>, <tt>GPC_INT</tt>, <tt>GPC_XOR</tt> or <tt>GPC_UNION</tt>).
+This is followed by subject and clip polygon parameters. The final parameter
+delivers the result, either as a polygon structure or as a collection of
+tristrips.
+
+<p>&nbsp;A polygon may be converted to the equivalent tristrip form using
+the function
+</p><pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; void gpc_polygon_to_tristrip(gpc_polygon&nbsp;&nbsp; *source_p,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_tristrip *result_t);</pre>
+Finally, the functions
+<pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; void gpc_free_polygon(gpc_polygon *p);
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; void gpc_free_tristrip(gpc_tristrip *t);</pre>
+may be used to release the memory taken up by a polygon or trapezoid on
+the heap.
+<h3>
+Hole and external contours</h3>
+A contour is classified as an <i>external contour</i> if its uppermost
+(or rightmost, when the contour top is horizontal) vertex&nbsp; forms an
+<i>external local maximum </i>(EMX). If this vertex forms an <i>internal
+local maximum</i> (IMX) the contour is classified as a <i>hole contour</i>.
+
+<p>When contour edges cross (in self intersecting shapes for example) the
+clipper will always generate a local maximum vertex below the intersection
+(or when one of the edges is horizontal,&nbsp; to the left of the intersection)
+which connects the two edge parts which&nbsp; meet at the intersection
+point from below or from the left. The edge parts which emerge from the
+opposite side of the intersection point originate from a new local minimum
+vertex. The closed contours generated by the clipper will <i>never</i>
+self-intersect.</p><p>
+
+</p><center>
+<img src="hole1.gif" alt="Holes" height="281" width="397"><p>
+<b>Figure 3:</b> Self-intersecting contours which decompose into
+an external contour containing a nested hole contour.
+</p></center>
+
+<p>These rules have implications with regard to how self intersecting shapes
+decompose into a set of closed, non-intersecting contours. The intersecting
+square examples of Figure 3, will each create two nested contours. In each
+case, the upper / rightmost maximum vertex of the internal contour forms
+an internal maximum, therefore the contour is classed as a hole (shown
+dotted). The corresponding outer contour is considered external as it
+terminates with an external maximum vertex.</p><p>
+
+</p><center>
+<img src="hole2.gif" alt="No holes" height="342" width="374"><p>
+<b>Figure 4: </b>Self-intersecting contours which decompose into
+two touching external contours.
+</p></center>
+
+
+<p>The examples of Figure 4, however, show how similar self intersecting
+shapes may each create two external contours which touch at the points
+of intersection. In summary, the contour paths generated by the clipper
+are affected not only by the shape of the input polygons, but also by their
+orientation.
+
+</p><h3>Associating holes with external contours</h3>
+
+The current version of the clipper merely flags which contours are
+considered to be holes, and which form external boundaries. Discovering
+which holes lie within which external contours takes a little more work on
+the part of the user. One way to associate holes <em>H</em>1, <em>H</em>2
+... <em>Hn</em> with external contours <em>E</em>1, <em>E</em>2
+... <em>Em</em> is to use the clipper to compute the difference of the
+<em>i</em>th hole <em>Hi</em> and each external contour <em>Ej</em>, for
+all <em>j</em> from 1 to <em>m</em>. Any difference which gives an empty
+result indicates that hole <em>i</em> lies within external contour
+<em>j</em>.<p>
+
+</p><h3>Coincident and near-coincident edges</h3>
+
+The clipper will merge edges which are coincident. Adjacent subject and
+clip contours which share share a common edge will fuse to form a single
+contour under the <i>union</i> operation, and will produce a null result
+along their shared boundary under the <i>intersection</i> operation.&nbsp;
+Numerical precision limits are likely to cause the slight misregistration
+of coincident edges, resulting in a failure to merge. Increasing the value
+of the <tt>GPC_EPSILON</tt> constant in <tt>gpc.h</tt> will encourage the
+merging of near-coincident edges. However, incorrect output polygon shapes
+may result if <tt>GPC_EPSILON</tt> is given too large a value.<p> 
+
+</p><h3>A code example</h3>
+
+In the following example program a clip / subject polygon pair is read
+from an input file. The intersection of these polygons is then calculated,
+and the result polygon is written to file. Hole classification information
+is neither read nor written in this example.<p>
+
+</p><pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; #include &lt;stdio.h&gt;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; #include "gpc.h"
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int main(void)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_polygon subject, clip, result;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FILE *sfp, *cfp, *ofp;
+&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; sfp= fopen("subjfile", "r");
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; cfp= fopen("clipfile", "r");
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_read_polygon(sfp, 0, &amp;subject);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_read_polygon(cfp, 0, &amp;clip);
+&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_polygon_clip(GPC_INT, &amp;subject, &amp;clip, &amp;result);
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ofp= fopen("outfile", "w");
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_write_polygon(ofp, 0, &amp;result);
+&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_free_polygon(&amp;subject);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_free_polygon(&amp;clip);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; gpc_free_polygon(&amp;result);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; fclose(sfp);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; fclose(cfp);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; fclose(ofp);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; return 0;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }</pre>
+
+<h3>Known bugs</h3>
+
+The following problems will hopefully be rectified within subsequent releases.
+Please see the release notes which follow for bug report procedures.
+<dl>
+<dt>
+<b>Non-serious</b></dt>
+
+<dd>
+Tristrip and polygonal output forms will not always be optimal in minimising
+triangle or vertex counts.</dd>
+</dl>
+
+<h3>Release notes</h3>
+
+This software is Copyright © 1997-1999, Advanced Interfaces Group,
+Department of Computer Science, University of Manchester. This software
+is free for non-commercial use. It may be copied, modified, and redistributed
+provided that the copyright notices which appear within the library source
+files are preserved on all copies. The intellectual property rights of
+the algorithms used reside with the University of Manchester Advanced
+Interfaces Group.
+
+<p>You may not use this software, in whole or in part, in support of any
+commercial product without the express consent of the author.
+
+</p><p>There is no warranty or other guarantee of fitness of this software
+for any purpose. It is provided solely "as is". Although no direct support
+for the use of this software will be given, bug reports may be sent to
+<tt>toby.howard@manchester.ac.uk</tt>.
+
+</p><p>See the <a href="https://web.archive.org/web/20200511113023/http://www.cs.man.ac.uk/~toby/alan/software/VERSIONS.TXT">VERSIONS.TXT</a> file for a revision
+history.
+
+</p><h3>References</h3>
+
+<dl compact="compact">
+<dt>
+<a name="vatti92"></a><b>[1]</b></dt>
+
+<dd>
+Vatti, B.R., "A Generic Solution to Polygon Clipping", <i>Communications
+of the ACM</i>, 35(7), July 1992, pp.56-63. (Please do not contact us
+asking for copies of this paper; we are regrettably unable to supply them.)</dd>
+</dl>
+
+<hr>Back to the <a href="https://web.archive.org/web/20200511113023/http://www.cs.man.ac.uk/~amurta/software/">gpc
+home page</a>.<p>
+
+
+
+
+</p></body></html>
+<!--
+     FILE ARCHIVED ON 11:30:23 May 11, 2020 AND RETRIEVED FROM THE
+     INTERNET ARCHIVE ON 10:12:54 Sep 15, 2023.
+     JAVASCRIPT APPENDED BY WAYBACK MACHINE, COPYRIGHT INTERNET ARCHIVE.
+
+     ALL OTHER CONTENT MAY ALSO BE PROTECTED BY COPYRIGHT (17 U.S.C.
+     SECTION 108(a)(3)).
+-->
